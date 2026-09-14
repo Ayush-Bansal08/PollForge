@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Developer's Choice</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            min-height: 100vh;
+
+            font-family: Arial, Helvetica, sans-serif;
+
+            background:
+                radial-gradient(circle at top left, #312e81, transparent 35%),
+                radial-gradient(circle at bottom right, #581c87, transparent 35%),
+                #09090b;
+
+            color: white;
+
+            display: flex;
+            justify-content: center;
+            align-items: center;
+
+            padding: 40px 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 900px;
+        }
+
+        /* ---------- HEADER ---------- */
+
+        .header {
+            text-align: center;
+            margin-bottom: 35px;
+        }
+
+        .badge {
+            display: inline-block;
+
+            padding: 8px 16px;
+
+            margin-bottom: 18px;
+
+            border-radius: 50px;
+
+            background: rgba(255, 255, 255, 0.07);
+
+            border: 1px solid rgba(255, 255, 255, 0.12);
+
+            color: #c4b5fd;
+
+            font-size: 13px;
+
+            font-weight: bold;
+
+            letter-spacing: 1px;
+        }
+
+        h1 {
+            font-size: 60px;
+
+            line-height: 1.1;
+
+            letter-spacing: -2px;
+
+            margin-bottom: 15px;
+        }
+
+        .gradient-text {
+            background: linear-gradient(
+                90deg,
+                #60a5fa,
+                #a78bfa,
+                #f472b6
+            );
+
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            max-width: 600px;
+
+            margin: auto;
+
+            color: #a1a1aa;
+
+            font-size: 17px;
+
+            line-height: 1.6;
+        }
+
+        /* ---------- VOTING CARD ---------- */
+
+        .voting-card {
+            background: rgba(24, 24, 27, 0.78);
+
+            border: 1px solid rgba(255, 255, 255, 0.1);
+
+            border-radius: 24px;
+
+            padding: 30px;
+
+            backdrop-filter: blur(20px);
+
+            box-shadow:
+                0 25px 80px rgba(0, 0, 0, 0.45);
+        }
+
+        .question {
+            text-align: center;
+
+            font-size: 22px;
+
+            font-weight: 600;
+
+            margin-bottom: 25px;
+        }
+
+        /* ---------- OPTIONS ---------- */
+
+        .language-grid {
+            display: grid;
+
+            grid-template-columns: repeat(4, 1fr);
+
+            gap: 14px;
+        }
+
+        .language-option {
+            position: relative;
+        }
+
+        /*
+            Hide the actual radio button.
+            We will make the whole card clickable.
+        */
+
+        .language-option input {
+            position: absolute;
+
+            opacity: 0;
+
+            pointer-events: none;
+        }
+
+        .language-option label {
+            min-height: 120px;
+
+            padding: 20px;
+
+            border-radius: 16px;
+
+            background: rgba(255, 255, 255, 0.045);
+
+            border: 1px solid rgba(255, 255, 255, 0.08);
+
+            cursor: pointer;
+
+            display: flex;
+
+            flex-direction: column;
+
+            align-items: center;
+
+            justify-content: center;
+
+            transition:
+                transform 0.2s ease,
+                background 0.2s ease,
+                border-color 0.2s ease,
+                box-shadow 0.2s ease;
+        }
+
+        .language-option label:hover {
+            transform: translateY(-4px);
+
+            background: rgba(255, 255, 255, 0.08);
+
+            border-color: rgba(167, 139, 250, 0.5);
+        }
+
+        .language-icon {
+            font-size: 34px;
+
+            margin-bottom: 10px;
+        }
+
+        .language-name {
+            font-size: 15px;
+
+            font-weight: 600;
+
+            text-align: center;
+        }
+
+        /* ---------- SELECTED OPTION ---------- */
+
+        .language-option input:checked + label {
+            background: rgba(124, 58, 237, 0.22);
+
+            border-color: #8b5cf6;
+
+            box-shadow:
+                0 0 0 2px rgba(139, 92, 246, 0.15),
+                0 10px 30px rgba(124, 58, 237, 0.18);
+
+            transform: translateY(-3px);
+        }
+
+        /* ---------- BUTTON ---------- */
+
+        .vote-button {
+            width: 100%;
+
+            margin-top: 25px;
+
+            padding: 16px;
+
+            border: none;
+
+            border-radius: 14px;
+
+            background: linear-gradient(
+                90deg,
+                #6366f1,
+                #8b5cf6
+            );
+
+            color: white;
+
+            font-size: 16px;
+
+            font-weight: bold;
+
+            cursor: pointer;
+
+            transition:
+                transform 0.2s ease,
+                box-shadow 0.2s ease;
+        }
+
+        .vote-button:hover {
+            transform: translateY(-2px);
+
+            box-shadow:
+                0 12px 30px rgba(124, 58, 237, 0.35);
+        }
+
+        .vote-button:active {
+            transform: translateY(0);
+        }
+
+        /* ---------- RESULT ---------- */
+
+        .result {
+            margin-top: 22px;
+
+            padding: 15px;
+
+            text-align: center;
+
+            border-radius: 12px;
+
+            background: rgba(34, 197, 94, 0.08);
+
+            border: 1px solid rgba(34, 197, 94, 0.2);
+
+            color: #86efac;
+
+            font-size: 14px;
+        }
+
+        /* ---------- FOOTER ---------- */
+
+        .footer {
+            text-align: center;
+
+            margin-top: 20px;
+
+            color: #71717a;
+
+            font-size: 12px;
+        }
+
+        .footer span {
+            color: #a1a1aa;
+        }
+
+        /* ---------- MOBILE ---------- */
+
+        @media (max-width: 700px) {
+
+            h1 {
+                font-size: 45px;
+            }
+
+            .language-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .voting-card {
+                padding: 20px;
+            }
+        }
+
+        @media (max-width: 400px) {
+
+            .language-grid {
+                grid-template-columns: 1fr;
+            }
+
+            h1 {
+                font-size: 38px;
+            }
+        }
+
+    </style>
+</head>
+
+
+<body>
+
+    <div class="container">
+
+        <!-- HEADER -->
+
+        <div class="header">
+
+            <div class="badge">
+                💻 DEVELOPER COMMUNITY
+            </div>
+
+            <h1>
+                Developer's
+                <span class="gradient-text">
+                    Choice
+                </span>
+            </h1>
+
+            <p class="subtitle">
+                Every developer has a favorite language.
+                What's yours?
+            </p>
+
+        </div>
+
+
+        <!-- VOTING CARD -->
+
+        <div class="voting-card">
+
+            <div class="question">
+                Which programming language do you prefer?(v2)
+            </div>
+
+
+            <form method="POST">
+
+                <div class="language-grid">
+
+                    <!--
+                        THIS IS THE IMPORTANT PART.
+
+                        Python sends us:
+
+                        options = [
+                            "Python",
+                            "Java",
+                            "Go",
+                            ...
+                        ]
+
+                        This loop creates one card
+                        for every option.
+                    -->
+
+                    {% for option in options %}
+
+                    <div class="language-option">
+
+                        <input
+                            type="radio"
+                            id="option-{{ loop.index }}"
+                            name="vote"
+                            value="{{ option }}"
+                            required
+                        >
+
+                        <label for="option-{{ loop.index }}">
+
+                            <div class="language-icon">
+                                💻
+                            </div>
+
+                            <div class="language-name">
+                                {{ option }}
+                            </div>
+
+                        </label>
+
+                    </div>
+
+                    {% endfor %}
+
+                </div>
+
+
+                <!-- VOTE BUTTON -->
+
+                <button
+                    class="vote-button"
+                    type="submit"
+                >
+                    Cast My Vote →
+                </button>
+
+            </form>
+
+
+            <!-- SUCCESS MESSAGE -->
+
+            {% if vote %}
+
+            <div class="result">
+
+                ✅ Your vote for
+                <strong>{{ vote }}</strong>
+                has been recorded!
+
+            </div>
+
+            {% endif %}
+
+        </div>
+
+
+        <!-- FOOTER -->
+
+        <div class="footer">
+
+            Running on
+            <span>{{ hostname }}</span>
+
+            · Kubernetes Voting Platform
+
+        </div>
+
+    </div>
+
+</body>
+
+</html>

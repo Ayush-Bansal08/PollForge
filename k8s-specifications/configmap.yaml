@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: voting-config
+data:
+  VOTING_OPTIONS: "Python,Java,JavaScript,C++,Go,Rust,C#,C"
+  

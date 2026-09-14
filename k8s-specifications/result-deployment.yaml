@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: result
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: result
+  template:
+    metadata:
+      labels:
+        app: result
+    spec:
+      containers:
+        - name: result
+          
+          image: votingappacr1234.azurecr.io/result:v1
+          ports:
+            - containerPort: 4000
+          env:
+            - name: DB_HOST
+              value: postgres
+          envFrom:
+            - configMapRef:
+                name: voting-config
+          readinessProbe:
+            httpGet:
+              path: /options
+              port: 4000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /options
+              port: 4000
+            initialDelaySeconds: 10
+            periodSeconds: 10   
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"

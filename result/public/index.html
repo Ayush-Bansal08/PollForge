@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Live Results</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; background:#09090b; color:white; }
+    .bar-row { width: 60%; margin: 14px auto; text-align:left; }
+    .bar-label { font-size: 14px; margin-bottom: 4px; }
+    .bar-container { background: #27272a; border-radius: 8px; overflow: hidden; height: 30px; }
+    .bar-fill { height: 30px; color: white; padding-left: 10px; line-height: 30px; font-size: 13px; white-space:nowrap; transition: width 0.3s ease; }
+  </style>
+</head>
+<body>
+  <h1>Live Results</h1>
+  <div id="results"></div>
+
+  <script>
+    let options = [];
+    const colors = ['#b13040','#0080ff','#22c55e','#f59e0b','#a855f7','#ec4899','#14b8a6','#eab308'];
+
+    function buildBars(opts) {
+      const container = document.getElementById('results');
+      container.innerHTML = '';
+      opts.forEach((opt, i) => {
+        const row = document.createElement('div');
+        row.className = 'bar-row';
+        row.innerHTML = `
+          <div class="bar-label">${opt}</div>
+          <div class="bar-container">
+            <div class="bar-fill" id="bar-${i}" style="width:0%; background:${colors[i % colors.length]}">0</div>
+          </div>`;
+        container.appendChild(row);
+      });
+    }
+
+    fetch('/options').then(res => res.json()).then(data => {
+      options = data.options;
+      buildBars(options);
+    });
+
+    const socket = io();
+
+    socket.on('scores', (counts) => {
+      const total = Object.values(counts).reduce((sum, c) => sum + c, 0) || 1;
+      options.forEach((opt, i) => {
+        const count = counts[opt] || 0;
+        const percent = Math.round((count / total) * 100);
+        const bar = document.getElementById(`bar-${i}`);
+        if (bar) {
+          bar.style.width = percent + '%';
+          bar.innerText = `${count} votes (${percent}%)`;
+        }
+      });
+    });
+  </script>
+</body>
+</html>
