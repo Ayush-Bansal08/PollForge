@@ -1,0 +1,56 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [vote, worker, result]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to ACR
+        run: az acr login --name ${{ vars.ACR_NAME }}
+
+      - name: Build and push image
+        run: |
+          docker build -t ${{ vars.ACR_NAME }}.azurecr.io/${{ matrix.service }}:${{ github.sha }} ./${{ matrix.service }}
+          docker push ${{ vars.ACR_NAME }}.azurecr.io/${{ matrix.service }}:${{ github.sha }}
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS credentials
+        run: az aks get-credentials --resource-group ${{ vars.AKS_RESOURCE_GROUP }} --name ${{ vars.AKS_CLUSTER_NAME }}
+
+      - name: Deploy new images
+        run: |
+          kubectl set image deployment/vote vote=${{ vars.ACR_NAME }}.azurecr.io/vote:${{ github.sha }}
+          kubectl set image deployment/worker worker=${{ vars.ACR_NAME }}.azurecr.io/worker:${{ github.sha }}
+          kubectl set image deployment/result result=${{ vars.ACR_NAME }}.azurecr.io/result:${{ github.sha }}
+          kubectl rollout status deployment/vote
+          kubectl rollout status deployment/worker
+          kubectl rollout status deployment/result
