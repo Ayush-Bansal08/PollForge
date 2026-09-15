@@ -5,7 +5,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: vote.local
+    - host: voting-platform.duckdns.org
       http:
         paths:
           - path: /
@@ -15,7 +15,7 @@ spec:
                 name: vote
                 port:
                   number: 5000
-    - host: results.local
+    - host: result-page.duckdns.org
       http:
         paths:
           - path: /
