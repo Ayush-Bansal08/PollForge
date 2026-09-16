@@ -4,6 +4,17 @@ const { Pool } = require('pg');
 const http = require('http');
 const { Server } = require('socket.io');
 
+
+const client = require('prom-client');
+const register = new client.Registry();
+client.collectDefaultMetrics({ register });
+
+const voteGauge = new client.Gauge({
+  name: 'voting_app_current_votes',
+  help: 'Current vote count per option',
+  labelNames: ['option'],
+  registers: [register],
+});
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
@@ -27,12 +38,12 @@ app.get('/options', (req, res) => {
 async function getCurrentCounts() {
   const result = await pool.query('SELECT vote, COUNT(*) AS count FROM votes GROUP BY vote');
 
-  // Start every known option at 0, so an option with zero votes still shows up
   const counts = {};
   options.forEach(opt => { counts[opt] = 0; });
+  result.rows.forEach(row => { counts[row.vote] = parseInt(row.count, 10); });
 
-  result.rows.forEach(row => {
-    counts[row.vote] = parseInt(row.count, 10);
+  Object.entries(counts).forEach(([option, count]) => {
+    voteGauge.set({ option }, count);
   });
 
   return counts;
@@ -68,4 +79,10 @@ connectWithRetry().then(() => {
       io.emit('scores', await getCurrentCounts());
     }, 1000);
   });
+});
+
+
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.end(await register.metrics());
 });
