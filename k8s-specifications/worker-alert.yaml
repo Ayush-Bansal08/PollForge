@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: worker-alerts
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  groups:
+    - name: voting-app
+      rules:
+        - alert: WorkerDown
+          expr: kube_deployment_status_replicas_available{deployment="worker"} < 1
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Worker deployment has no available replicas"

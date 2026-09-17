@@ -2,8 +2,21 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: voting-app-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+
 spec:
   ingressClassName: nginx
+
+  tls:
+    - hosts:
+        - voting-platform.duckdns.org
+      secretName: vote-tls-secret
+
+    - hosts:
+        - result-page.duckdns.org
+      secretName: result-tls-secret
+
   rules:
     - host: voting-platform.duckdns.org
       http:
@@ -15,6 +28,7 @@ spec:
                 name: vote
                 port:
                   number: 5000
+
     - host: result-page.duckdns.org
       http:
         paths:
