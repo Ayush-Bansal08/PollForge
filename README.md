@@ -374,33 +374,3 @@ No. The `voter_id` is a random browser cookie and is not an authenticated identi
 7. **Close observability gaps:** add queue depth, processing latency, failed-message, database-connection, and end-to-end vote-freshness metrics.
 8. **Manage schema explicitly:** introduce migrations instead of creating the table from application startup code.
 
-## Interview Guide
-
-### A concise project explanation
-
-> I built a containerized voting platform with a Flask producer, a Redis queue, a .NET persistence worker, PostgreSQL as the durable store, and a Node.js Socket.IO result service. It runs with Docker Compose locally and is modeled for AKS with Kubernetes manifests, ingress/TLS, Prometheus monitoring, and SHA-based GitHub Actions deployments. The key design choice is asynchronous persistence, which keeps the request path responsive but introduces eventual consistency and requires stronger acknowledgement semantics for production.
-
-### Questions worth being ready to answer
-
-- Where is the system eventually consistent, and how would you communicate that to users?
-- How would you prevent a worker crash from losing a Redis message?
-- Why is a Kubernetes StatefulSet appropriate for PostgreSQL but not for API services?
-- How would you scale the worker without creating duplicate votes?
-- How would you authenticate voters if this were a real election?
-- What would you monitor to detect a growing backlog before users notice stale results?
-- How would you perform a rollback when a SHA-tagged release fails its rollout?
-- What is the difference between a base64 Kubernetes Secret and encrypted secret management?
-- Which components are single points of failure in the current deployment?
-- How would you test the complete flow from HTTP submission to Socket.IO update?
-
-### Strong answers should mention
-
-- At-least-once processing plus idempotent writes is usually preferable to claiming exactly-once delivery.
-- The current Redis `LPOP` sequence is not durable acknowledgement semantics.
-- A cookie-based identifier is a demo mechanism, not identity, authorization, or anti-abuse protection.
-- A single PostgreSQL replica and a single Redis replica are availability limitations.
-- Metrics should measure infrastructure health and business freshness, not only process uptime.
-
-## License
-
-No license is currently specified in the repository.
