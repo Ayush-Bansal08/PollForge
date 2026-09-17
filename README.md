@@ -1,493 +1,406 @@
-Developer's Choice — Kubernetes Voting Platform
+# Cloud-Native Voting Platform
 
-A containerized, event-driven voting platform built as three independent services: a Flask voting service, a .NET 8 background worker, and a Node.js live-results service. Votes are buffered through Redis, persisted to PostgreSQL, and exposed through a real-time Socket.IO results page.
+![Architecture: Flask, Redis, .NET worker, PostgreSQL, Node.js, Kubernetes, and Azure](https://img.shields.io/badge/architecture-event--driven-0b7285)
+![Cloud: Azure AKS and ACR](https://img.shields.io/badge/cloud-Azure%20AKS%20%2B%20ACR-0078D4)
+![Orchestration: Kubernetes](https://img.shields.io/badge/orchestration-Kubernetes-326CE5)
+![Delivery: GitHub Actions](https://img.shields.io/badge/delivery-GitHub%20Actions-2088FF)
 
-The repository also demonstrates Docker Compose, Kubernetes, persistent storage, Ingress/TLS, Prometheus monitoring, alerting, and GitHub Actions-based deployment to AKS/ACR.
+> **A production-minded cloud engineering project:** asynchronous voting, durable persistence, live results, Kubernetes operations, Prometheus observability, and Azure delivery in one small but complete platform.
 
-Architecture
+An event-driven voting application that demonstrates how a small product can be decomposed, containerized, observed, and deployed to Kubernetes on Azure.
 
+A browser submits a vote to a Flask service, the request is buffered in Redis, a .NET worker persists the vote to PostgreSQL, and a Node.js service continuously publishes aggregated results to browsers over Socket.IO. The same services run locally with Docker Compose and in AKS through Kubernetes manifests and GitHub Actions.
+
+## Portfolio Snapshot
+
+| Area | Implemented in this repository |
+| --- | --- |
+| **Application architecture** | Three independently containerized services with a Redis producer-consumer boundary and PostgreSQL persistence |
+| **Cloud platform** | Azure Kubernetes Service (AKS) for orchestration and Azure Container Registry (ACR) for private image storage |
+| **Deployment automation** | GitHub Actions builds the service images in parallel, pushes commit-SHA tags to ACR, authenticates to Azure with OIDC, and waits for AKS rollouts |
+| **Networking** | Kubernetes Services for internal DNS plus NGINX Ingress for host-based external routing |
+| **Transport security** | cert-manager ClusterIssuer configured for Let's Encrypt ACME HTTP-01 certificates |
+| **Observability** | Prometheus-compatible metrics, a Kubernetes ServiceMonitor, and a worker availability alert |
+| **State management** | PostgreSQL StatefulSet with a persistent volume claim; stateless APIs run as Deployments |
+| **Engineering judgment** | Documented consistency model, queue-loss failure mode, security limitations, and prioritized production roadmap |
+
+This is the intended hiring-manager summary: the project demonstrates both implementation ability and the judgment to explain where a demonstration system must be hardened before it becomes a production system.
+
+> **Project status:** This is an interview-ready platform demonstration. The core workflow is implemented and deployable, while the production hardening section explicitly documents remaining reliability, security, and operational work. That distinction is deliberate: strong engineering documentation makes trade-offs visible instead of hiding them.
+
+## What This Demonstrates
+
+- Service decomposition across Python, .NET, and Node.js
+- Producer-consumer messaging with Redis
+- Asynchronous persistence into PostgreSQL
+- Voter-level update behavior: a voter can change their selection
+- Containerized local development with Docker Compose
+- Kubernetes Deployments, Services, a StatefulSet, ConfigMap, Secret, Ingress, and PVC
+- TLS issuance through cert-manager and Let's Encrypt
+- Prometheus metrics, a ServiceMonitor, and a worker availability alert
+- SHA-tagged container releases from GitHub Actions to Azure Container Registry and AKS
+- Honest analysis of delivery semantics, stateful workloads, and production gaps
+
+## Architecture
+
+```mermaid
 flowchart LR
-    U[Browser]
-    V[Vote Service<br/>Flask :5000]
-    R[(Redis :6379)]
-    W[Worker<br/>.NET 8]
-    P[(PostgreSQL :5432)]
-    S[Result Service<br/>Node.js :4000]
-    I[NGINX Ingress]
-    M[Prometheus]
+    Browser[Browser]
+    Ingress[NGINX Ingress\nTLS]
+    Vote[Vote service\nFlask :5000]
+    Redis[(Redis\nvote queue)]
+    Worker[Worker\n.NET 8]
+    Postgres[(PostgreSQL\npersistent volume)]
+    Result[Result service\nNode.js :4000]
+    Prometheus[Prometheus]
 
-    U -->|Submit vote| V
-    V -->|RPUSH votes| R
-    R -->|LPOP votes| W
-    W -->|INSERT / UPDATE| P
-    S -->|SQL aggregation| P
-    S -->|Socket.IO scores| U
-    U -->|HTTPS| I
-    I --> V
-    I --> S
-    S -->|/metrics| M
+    Browser -->|HTTPS| Ingress
+    Ingress --> Vote
+    Ingress --> Result
+    Vote -->|RPUSH JSON| Redis
+    Redis -->|LPOP| Worker
+    Worker -->|INSERT or UPDATE| Postgres
+    Result -->|GROUP BY vote| Postgres
+    Result -->|Socket.IO scores| Browser
+    Result -->|/metrics| Prometheus
+```
 
-Request and data flow
+### Request and data flow
 
-The Flask service renders the voting page and assigns a voter_id cookie when needed.
+1. The vote service renders the voting page and assigns a `voter_id` cookie when the browser does not already have one.
+2. A submitted choice is serialized as JSON and appended to the Redis `votes` list.
+3. The worker polls Redis, removes the next message, and writes it to PostgreSQL.
+4. PostgreSQL stores one row per voter. A later vote from the same voter updates the existing row.
+5. The result service aggregates rows by option and broadcasts current counts to connected browsers every second.
+6. Prometheus scrapes the result service for runtime and application metrics.
 
-A submitted vote is serialized as JSON and pushed to the Redis votes list.
+The browser-facing request is decoupled from database latency. The trade-off is eventual consistency: a vote may not appear in results until the worker has processed it.
 
-The .NET worker continuously consumes the list with LPOP.
+## Services
 
-The worker stores the vote in PostgreSQL using the voter ID as a unique identifier.
+| Service | Technology | Responsibility | Port |
+| --- | --- | --- | --- |
+| `vote` | Python 3.11, Flask | Renders the ballot and publishes vote messages | `5000` |
+| `worker` | .NET 8, Npgsql, StackExchange.Redis | Consumes Redis messages and persists votes | None |
+| `result` | Node.js 20, Express, Socket.IO, `pg` | Aggregates votes, serves results UI, pushes live scores | `4000` |
+| `redis` | Redis 7 | Temporary vote queue | `6379` |
+| `postgres` | PostgreSQL 15 | Durable vote storage | `5432` |
 
-If that voter already exists, the worker updates the existing record.
+## Repository Layout
 
-The Node.js result service aggregates PostgreSQL records with GROUP BY vote.
+```text
+.
+├── .github/workflows/deploy.yaml       # Build, push, and AKS rollout workflow
+├── docker-compose.yml                  # Local multi-container environment
+├── vote/                               # Flask producer and voting UI
+├── worker/                             # .NET background consumer
+├── result/                             # Node.js results API and Socket.IO UI
+└── k8s-specifications/                 # Kubernetes resources
+    ├── *-deployment.yaml               # vote, worker, result, and Redis
+    ├── *-service.yaml                  # ClusterIP networking
+    ├── postgres-statefulset.yaml        # PostgreSQL and 1 GiB PVC template
+    ├── configmap.yaml                  # Voting options
+    ├── postgres-secret.yaml             # PostgreSQL credentials
+    ├── ingress.yaml                    # Host-based routing and TLS
+    ├── cluster-issuer-prod.yaml         # Let's Encrypt issuer
+    ├── result-servicemonitor.yaml       # Prometheus scrape configuration
+    └── worker-alert.yaml                # Worker availability alert
+```
 
-Socket.IO broadcasts the current counts to connected browsers every second.
+## Implementation Evidence
 
-The result UI converts the counts into live percentage bars.
+The platform claims above are backed by concrete repository artifacts:
 
-Important: the vote service queues a vote in Redis before durable PostgreSQL processing occurs. Persistence is intentionally asynchronous.
+| Capability | Where to inspect it |
+| --- | --- |
+| Local multi-service environment | `docker-compose.yml` |
+| Flask vote producer | `vote/app.py` and `vote/Dockerfile` |
+| Redis-to-PostgreSQL background processing | `worker/Program.cs` and `worker/dockerfile` |
+| Live result aggregation and metrics | `result/server.js` and `result/Dockerfile` |
+| Kubernetes application workloads | `k8s-specifications/*-deployment.yaml` |
+| Stable internal service discovery | `k8s-specifications/*-service.yaml` |
+| Durable PostgreSQL storage | `k8s-specifications/postgres-statefulset.yaml` |
+| External routing and TLS | `k8s-specifications/ingress.yaml` and `cluster-issuer-prod.yaml` |
+| Prometheus scraping and alerting | `result-servicemonitor.yaml` and `worker-alert.yaml` |
+| Azure build and deployment automation | `.github/workflows/deploy.yaml` |
 
-Key Features
+## Azure Delivery Path
 
-Flask-based voting UI with configurable voting options.
+The cloud deployment is intentionally traceable from source commit to running workload:
 
-Redis-backed asynchronous vote queue.
+1. A push to `main` starts GitHub Actions.
+2. A matrix build creates separate `vote`, `worker`, and `result` images in parallel.
+3. Azure OIDC login obtains short-lived cloud credentials without storing a long-lived Azure password in the workflow.
+4. Each image is pushed to Azure Container Registry using the Git commit SHA as its immutable release identifier.
+5. The deployment job retrieves AKS credentials with `az aks get-credentials`.
+6. `kubectl set image` updates the three Kubernetes Deployments to the new ACR image tags.
+7. `kubectl rollout status` makes the workflow wait for the new workloads to become available.
+8. NGINX Ingress routes the public hosts to the services, while cert-manager requests and renews Let's Encrypt certificates.
 
-Dedicated .NET 8 worker for persistence processing.
+This gives the project a clear operational story: build once, publish an immutable artifact, deploy that artifact to AKS, and verify rollout completion. The remaining production additions are documented below rather than implied.
 
-PostgreSQL-backed durable vote storage.
+## Run Locally
 
-Per-browser voter_id used to update an existing vote.
+### Prerequisites
 
-Live result updates through Socket.IO.
+- Docker Desktop with Docker Compose
+- A browser
+- Optional: `kubectl`, an AKS cluster, and Azure CLI for cloud deployment
 
-Prometheus metrics exposed at /metrics.
+### Start the complete stack
 
-Kubernetes Deployments for application services.
-
-PostgreSQL StatefulSet with a 1 GiB PVC.
-
-Kubernetes Services for internal service discovery.
-
-NGINX Ingress with separate vote/result hostnames.
-
-cert-manager ACME configuration for TLS.
-
-Readiness/liveness probes for vote and result services.
-
-Prometheus ServiceMonitor and worker availability alert.
-
-GitHub Actions build → ACR push → AKS deployment workflow.
-
-Commit-SHA image tagging in CI/CD for traceable releases.
-
-Tech Stack
-
-Area
-
-Technology
-
-Vote service
-
-Python 3.11, Flask, Redis client
-
-Worker
-
-.NET 8, Npgsql, StackExchange.Redis, Newtonsoft.Json
-
-Result service
-
-Node.js 20, Express, PostgreSQL (pg), Socket.IO
-
-Data
-
-Redis 7, PostgreSQL 15
-
-Containers
-
-Docker, Docker Compose
-
-Orchestration
-
-Kubernetes
-
-Ingress/TLS
-
-NGINX Ingress, cert-manager, Let's Encrypt ACME
-
-Observability
-
-Prometheus metrics, ServiceMonitor, PrometheusRule
-
-Cloud deployment
-
-Azure Kubernetes Service (AKS), Azure Container Registry (ACR)
-
-CI/CD
-
-GitHub Actions
-
-Repository Structure
-
-Voting_app-main/
-├── .github/workflows/deploy.yaml
-├── docker-compose.yml
-├── vote/
-│   ├── app.py
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   └── templates/index.html
-├── worker/
-│   ├── Program.cs
-│   ├── worker.csproj
-│   └── dockerfile
-├── result/
-│   ├── server.js
-│   ├── package.json
-│   ├── package-lock.json
-│   ├── Dockerfile
-│   └── public/index.html
-└── k8s-specifications/
-    ├── vote-deployment.yaml / vote-service.yaml
-    ├── worker-deployment.yaml / worker-alert.yaml
-    ├── result-deployment.yaml / result-service.yaml / result-servicemonitor.yaml
-    ├── redis-deployment.yaml / redis-service.yaml
-    ├── postgres-statefulset.yaml / postgres-service.yaml / postgres-secret.yaml
-    ├── configmap.yaml
-    ├── ingress.yaml
-    └── cluster-issuer-prod.yaml
-
-Run Locally with Docker Compose
-
-Prerequisites
-
-Docker with Docker Compose
-
-Start
-
+```bash
 git clone <repository-url>
-cd Voting_app-main
+cd k8s-voting-app-azure
 docker compose up --build
+```
 
-The local stack exposes:
+Open:
 
-Service
+- Voting UI: <http://localhost:5000>
+- Results UI: <http://localhost:4000>
+- Metrics: <http://localhost:4000/metrics>
 
-Address
+The Compose environment provides Redis and PostgreSQL on their default container ports. Database data is not declared with a named Compose volume, so treat this setup as disposable development infrastructure.
 
-Purpose
+Stop the stack:
 
-Vote
-
-http://localhost:5000
-
-Submit votes
-
-Result
-
-http://localhost:4000
-
-View live results
-
-Redis
-
-localhost:6379
-
-Vote queue
-
-PostgreSQL
-
-localhost:5432
-
-Persistent vote storage
-
-Stop the stack with:
-
+```bash
 docker compose down
+```
 
-The Compose configuration uses Redis 7 and PostgreSQL 15 and wires the application services together through Compose service names (redis and postgres).
+To also remove anonymous volumes:
 
-Service Responsibilities
+```bash
+docker compose down -v
+```
 
-Vote — Flask
+### Verify the workflow
 
-vote/app.py handles the browser-facing voting workflow. It reads VOTING_OPTIONS, creates a voter_id cookie, and pushes JSON vote messages to Redis.
+1. Submit a vote at `http://localhost:5000`.
+2. Open `http://localhost:4000` in another tab.
+3. Change the vote in the first tab and observe the updated aggregate after the worker processes the message.
+4. Inspect worker logs:
 
-Worker — .NET 8
+```bash
+docker compose logs -f worker
+```
 
-worker/Program.cs acts as the consumer. It retries connections while Redis/PostgreSQL are unavailable, consumes votes from Redis, creates the votes table when needed, and performs an insert-or-update operation for each voter.
+## Kubernetes and AKS
 
-Result — Node.js
+The manifests use Kubernetes Service DNS names for internal communication:
 
-result/server.js serves the results UI, exposes /options and /metrics, queries PostgreSQL for vote counts, and broadcasts scores through Socket.IO.
+```text
+vote      -> vote:5000
+redis     -> redis:6379
+postgres  -> postgres:5432
+result    -> result:4000
+```
 
-Kubernetes Deployment
+The checked-in resources create one replica for each application Deployment and Redis, plus a single PostgreSQL StatefulSet replica with a 1 GiB `ReadWriteOnce` PVC. The result Deployment has CPU and memory requests/limits; the other workloads do not yet have resource policies.
 
-The k8s-specifications/ directory contains the Kubernetes resources required by the application.
+### Prerequisites for the full manifest set
 
-Resource
+- An accessible Kubernetes cluster, such as AKS
+- NGINX Ingress Controller
+- cert-manager and its CRDs
+- Prometheus Operator for `ServiceMonitor` and `PrometheusRule`
+- DNS records for the configured hosts
+- An image registry accessible by the cluster
 
-Purpose
+The monitoring resources assume a Prometheus installation in the `monitoring` namespace with the label selector used by the manifests. The ClusterIssuer assumes the ingress controller can solve the HTTP-01 challenge.
 
-Deployments
+### Apply and verify
 
-Run vote, worker, result, and Redis workloads
-
-StatefulSet
-
-Runs PostgreSQL with persistent storage
-
-Services
-
-Provide stable internal networking
-
-ConfigMap
-
-Stores VOTING_OPTIONS
-
-Secret
-
-Supplies PostgreSQL credentials
-
-Ingress
-
-Routes external traffic to vote/result services
-
-ClusterIssuer
-
-Configures Let's Encrypt ACME TLS issuance
-
-ServiceMonitor
-
-Scrapes result-service metrics
-
-PrometheusRule
-
-Alerts when the worker has no available replica
-
-Apply manifests
-
+```bash
 kubectl apply -f k8s-specifications/
-
-Verify the workloads:
-
 kubectl get pods
 kubectl get deployments
 kubectl get services
+kubectl get pvc
 kubectl get ingress
+```
 
-The application manifests currently configure one replica for each application workload and Redis. PostgreSQL is a single-replica StatefulSet with a 1 GiB persistent volume claim.
+```bash
+kubectl rollout status deployment/vote
+kubectl rollout status deployment/worker
+kubectl rollout status deployment/result
+```
 
-Kubernetes networking
+The Ingress currently routes:
 
-The application uses Kubernetes Service DNS names:
+| Host | Backend |
+| --- | --- |
+| `voting-platform.duckdns.org` | `vote:5000` |
+| `result-page.duckdns.org` | `result:4000` |
 
-vote      → vote:5000
-redis     → redis:6379
-postgres  → postgres:5432
-result    → result:4000
+These are repository configuration values, not guaranteed live endpoints. Replace them with domains controlled by the deployment owner and point DNS to the ingress public address.
 
-External routing is configured through NGINX Ingress:
+## Configuration and Secrets
 
-voting-platform.duckdns.org → vote:5000
-result-page.duckdns.org     → result:4000
+Voting options are supplied through `VOTING_OPTIONS` as a comma-separated list:
 
-The Ingress configuration associates both hosts with TLS secrets managed through cert-manager.
-
-Observability
-
-The result service exposes Prometheus metrics at:
-
-/metrics
-
-A Kubernetes ServiceMonitor scrapes the result service every 15 seconds.
-
-The application also defines a PrometheusRule named WorkerDown. It fires when Kubernetes reports fewer than one available replica for the worker Deployment for 1 minute.
-
-The result service additionally publishes a custom gauge:
-
-voting_app_current_votes{option="..."}
-
-which represents the current count for each configured voting option.
-
-CI/CD
-
-The GitHub Actions workflow in .github/workflows/deploy.yaml runs on pushes to main.
-
-flowchart LR
-    A[Push to main] --> B[GitHub Actions]
-    B --> C[Build vote / worker / result]
-    C --> D[Push images to ACR]
-    D --> E[Get AKS credentials]
-    E --> F[kubectl set image]
-    F --> G[Rollout status]
-
-The build job uses a matrix to build the three application images in parallel. Images are tagged with the Git commit SHA and pushed to Azure Container Registry.
-
-The deployment job authenticates to Azure, retrieves AKS credentials, updates the three Kubernetes Deployments, and waits for their rollouts to complete.
-
-This provides a traceable relationship between a Git commit and the container image deployed to AKS.
-
-Deployment note: the checked-in Kubernetes manifests contain versioned image tags, while the GitHub Actions workflow deploys commit-SHA tags with kubectl set image. The CI/CD workflow therefore updates the running Deployment images during deployment.
-
-Configuration
-
-The voting options are centralized through VOTING_OPTIONS:
-
+```text
 Python,Java,JavaScript,C++,Go,Rust,C#,C
+```
 
-Local Docker Compose configuration also supplies:
+Local Compose uses:
 
-Vote:
-  REDIS_HOST=redis
+```text
+REDIS_HOST=redis
+DB_HOST=postgres
+DB_USER=postgres
+DB_PASSWORD=postgres
+DB_NAME=postgres
+```
 
-Result:
-  DB_HOST=postgres
-  DB_USER=postgres
-  DB_PASSWORD=postgres
-  DB_NAME=postgres
+Kubernetes stores voting options in `voting-config` and PostgreSQL credentials in `postgres-secret`. The checked-in Secret values are base64-encoded defaults, not encryption. Do not use them for a real environment; use Azure Key Vault with a CSI driver, sealed secrets, or an equivalent external secret system.
 
-Kubernetes uses the voting-config ConfigMap for the voting options and a Kubernetes Secret for PostgreSQL credentials.
+## API and Runtime Endpoints
 
-Do not commit real production credentials to source control.
+| Service | Method and path | Purpose |
+| --- | --- | --- |
+| Vote | `GET /` | Render the ballot |
+| Vote | `POST /` | Queue a selected option |
+| Result | `GET /options` | Return configured options and support health probes |
+| Result | `GET /metrics` | Expose Prometheus metrics |
+| Result | Socket.IO connection | Send `scores` updates to browsers |
 
-API / Service Endpoints
+Redis messages have this shape:
 
-Service
+```json
+{"voter_id":"<cookie-derived-id>","vote":"Python"}
+```
 
-Endpoint
+## Data Model
 
-Purpose
+The worker creates the table on startup if it does not already exist:
 
-Vote
-
-GET /
-
-Render voting page
-
-Vote
-
-POST /
-
-Queue submitted vote
-
-Result
-
-GET /options
-
-Return configured voting options
-
-Result
-
-GET /metrics
-
-Expose Prometheus metrics
-
-The result application also serves its static frontend and establishes Socket.IO connections for live score updates.
-
-Data Model
-
-The worker creates the following PostgreSQL table when the database is initialized:
-
+```sql
 CREATE TABLE IF NOT EXISTS votes (
     id VARCHAR(255) NOT NULL UNIQUE,
     vote VARCHAR(255) NOT NULL
 );
+```
 
-The worker uses id as the voter identifier. The result service aggregates the vote column using SQL GROUP BY and returns counts for every configured option, including options with zero votes.
+`id` is the browser's voter identifier and acts as the uniqueness constraint. The worker first attempts an insert; if the insert raises a PostgreSQL exception, it falls back to updating that voter. The result service runs `GROUP BY vote` and initializes configured options to zero so options with no votes are still displayed.
 
-Engineering Highlights
+## Observability
 
-Asynchronous persistence
+The result service uses `prom-client` to expose default Node.js metrics plus:
 
-The Flask service does not perform the PostgreSQL write itself. Redis buffers the vote and a separate worker handles persistence.
+```text
+voting_app_current_votes{option="<option>"}
+```
 
-Producer-consumer architecture
+The Kubernetes monitoring resources provide:
 
-The vote service produces Redis messages while the worker consumes them, creating a clear boundary between request handling and background processing.
+- A `ServiceMonitor` scraping `/metrics` every 15 seconds
+- A `WorkerDown` `PrometheusRule` when the worker has no available replica for one minute
+- A result-service endpoint that can be queried directly during local development
 
-Kubernetes-native service discovery
+Useful commands:
 
-Application components use Kubernetes Service names rather than pod IP addresses, allowing pods to be replaced without changing connection configuration.
+```bash
+kubectl logs deployment/worker
+kubectl logs deployment/result
+kubectl describe pod <pod-name>
+kubectl get events --sort-by=.lastTimestamp
+```
 
-Stateful vs stateless workloads
+## CI/CD to ACR and AKS
 
-PostgreSQL is represented as a StatefulSet with persistent storage, while the application services and Redis are represented as Deployments.
+The workflow in `.github/workflows/deploy.yaml` runs on pushes to `main`:
 
-Health-aware application deployment
+```mermaid
+flowchart LR
+    Commit[Push to main] --> Build[Build vote, worker, result in parallel]
+    Build --> Registry[Push images tagged with commit SHA to ACR]
+    Registry --> Auth[Azure OIDC login]
+    Auth --> Cluster[Get AKS credentials]
+    Cluster --> Update[Update Deployment images]
+    Update --> Rollout[Wait for rollout status]
+```
 
-The vote and result Deployments define readiness and liveness probes. The result Deployment also defines CPU and memory requests/limits.
+The workflow expects these GitHub repository variables:
 
-Real-time presentation
+```text
+AZURE_CLIENT_ID
+AZURE_TENANT_ID
+AZURE_SUBSCRIPTION_ID
+ACR_NAME
+AKS_RESOURCE_GROUP
+AKS_CLUSTER_NAME
+```
 
-The result service combines PostgreSQL aggregation with Socket.IO to push updated scores to connected browsers.
+The workflow deploys images tagged with `${{ github.sha }}` using `kubectl set image`. The deployed image is therefore traceable to the source commit that triggered the workflow.
 
-Observable deployment
+The current pipeline is a deployment pipeline, not a full verification pipeline: it does not yet run automated tests, image scanning, manifest validation, or a staged approval before production rollout.
 
-Prometheus-compatible metrics, a ServiceMonitor, and a worker availability alert provide the foundation for Kubernetes-level observability.
+## Engineering Decisions and Trade-offs
 
-Commit-based releases
+### Why Redis between HTTP and PostgreSQL?
 
-CI/CD uses the Git SHA as the container image tag, making deployed application versions directly traceable to source revisions.
+It keeps vote submission fast and isolates the request path from transient database latency. It also creates a producer-consumer boundary that can absorb short bursts of traffic.
 
-Production Hardening Opportunities
+### Why a separate .NET worker?
 
-The current repository is a strong demonstration of containerized and Kubernetes-based architecture, but several areas could be hardened for production:
+Persistence is an independently deployable concern with its own runtime and scaling characteristics. The worker can restart without taking the public voting UI offline.
 
-Add automated unit/integration tests and run them before image publication.
+### Why a PostgreSQL StatefulSet?
 
-Replace development/default database credentials with managed secret storage.
+PostgreSQL owns durable application state, so it receives a stable identity and persistent volume. Stateless application services use Deployments and Services instead.
 
-Disable Flask debug mode in deployed environments.
+### What consistency model does the application provide?
 
-Add stronger Redis delivery semantics so a worker failure after LPOP cannot lose a queued vote.
+Vote submission is acknowledged after the message is appended to Redis, while the result page reads PostgreSQL. The user experience is eventually consistent, usually within the worker polling interval and result refresh interval.
 
-Handle only the expected PostgreSQL uniqueness conflict when falling back from INSERT to UPDATE.
+### What happens if the worker crashes?
 
-Consider Redis persistence/HA if queued votes must survive Redis failure.
+The current worker uses `LPOP`, which removes a message before PostgreSQL persistence completes. A crash between those operations can lose that vote. This is a known limitation, not an exactly-once guarantee.
 
-Add PostgreSQL backup/restore and HA strategy where required.
+### Is the voter identity secure?
 
-Add resource requests/limits and autoscaling policies to additional workloads.
+No. The `voter_id` is a random browser cookie and is not an authenticated identity. It demonstrates update semantics for a browser session, not election-grade voter verification or fraud prevention.
 
-Add richer metrics for queue depth, processing latency, and worker failures.
+## Production Hardening Roadmap
 
-Harden containers with non-root users and Kubernetes security contexts.
+1. **Prevent message loss:** use Redis Streams with consumer groups, or a reliable queue pattern with acknowledgement, retries, a dead-letter path, and visibility timeouts.
+2. **Make persistence idempotent:** use `INSERT ... ON CONFLICT (id) DO UPDATE` and validate allowed vote options before writing.
+3. **Protect secrets:** remove default credentials from manifests and use Azure Key Vault with a CSI driver or an equivalent external secret system.
+4. **Harden the application:** disable Flask debug mode, validate request input, set secure cookie attributes, add authentication/rate limiting as required, and run containers as non-root users.
+5. **Improve availability:** use managed PostgreSQL, Redis HA/persistence, backups with restore drills, multiple replicas, PodDisruptionBudgets, and autoscaling where load justifies it.
+6. **Strengthen delivery:** add unit/integration tests, container vulnerability scanning, SBOM generation, Kubernetes schema validation, and progressive rollout or approval gates.
+7. **Close observability gaps:** add queue depth, processing latency, failed-message, database-connection, and end-to-end vote-freshness metrics.
+8. **Manage schema explicitly:** introduce migrations instead of creating the table from application startup code.
 
-These are improvements, not claims about functionality currently implemented in the repository.
+## Interview Guide
 
-Interview Talking Points
+### A concise project explanation
 
-Why Redis?
-It provides a lightweight buffer between synchronous vote submission and asynchronous persistence.
+> I built a containerized voting platform with a Flask producer, a Redis queue, a .NET persistence worker, PostgreSQL as the durable store, and a Node.js Socket.IO result service. It runs with Docker Compose locally and is modeled for AKS with Kubernetes manifests, ingress/TLS, Prometheus monitoring, and SHA-based GitHub Actions deployments. The key design choice is asynchronous persistence, which keeps the request path responsive but introduces eventual consistency and requires stronger acknowledgement semantics for production.
 
-Why a separate worker?
-It decouples request handling from database processing and demonstrates a producer-consumer pattern.
+### Questions worth being ready to answer
 
-Why PostgreSQL StatefulSet?
-PostgreSQL is stateful and requires persistent storage; the manifest uses a StatefulSet with a PVC.
+- Where is the system eventually consistent, and how would you communicate that to users?
+- How would you prevent a worker crash from losing a Redis message?
+- Why is a Kubernetes StatefulSet appropriate for PostgreSQL but not for API services?
+- How would you scale the worker without creating duplicate votes?
+- How would you authenticate voters if this were a real election?
+- What would you monitor to detect a growing backlog before users notice stale results?
+- How would you perform a rollback when a SHA-tagged release fails its rollout?
+- What is the difference between a base64 Kubernetes Secret and encrypted secret management?
+- Which components are single points of failure in the current deployment?
+- How would you test the complete flow from HTTP submission to Socket.IO update?
 
-How are services discovered in Kubernetes?
-Kubernetes Services provide stable DNS names such as redis, postgres, vote, and result.
+### Strong answers should mention
 
-How are live results implemented?
-The Node.js service queries PostgreSQL, maintains a per-option Prometheus gauge, and broadcasts scores through Socket.IO every second.
+- At-least-once processing plus idempotent writes is usually preferable to claiming exactly-once delivery.
+- The current Redis `LPOP` sequence is not durable acknowledgement semantics.
+- A cookie-based identifier is a demo mechanism, not identity, authorization, or anti-abuse protection.
+- A single PostgreSQL replica and a single Redis replica are availability limitations.
+- Metrics should measure infrastructure health and business freshness, not only process uptime.
 
-How does CI/CD deploy a new version?
-GitHub Actions builds three images in parallel, pushes SHA-tagged images to ACR, obtains AKS credentials, updates the Deployments, and waits for rollouts.
+## License
 
-How is PostgreSQL data persisted?
-The Kubernetes PostgreSQL StatefulSet uses a volume claim template requesting 1 GiB and mounts it at PostgreSQL's data directory.
-
-How is monitoring implemented?
-The result service exposes /metrics; a ServiceMonitor scrapes it every 15 seconds, and a PrometheusRule detects an unavailable worker Deployment.
-
-What is an important reliability trade-off?
-The worker removes a vote from Redis before saving it to PostgreSQL. A worker failure between those operations could therefore lose that queued item; reliable acknowledgement/retry semantics would improve the design.
-
-What would you improve for production?
-Testing, secret management, queue durability, database HA/backups, resource policies, security hardening, and richer observability would be natural next steps.
-
-License
-
-No license is specified in the repository.
+No license is currently specified in the repository.
